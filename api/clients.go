@@ -16,8 +16,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-var SunName string
-
 // md5加密
 func Md5(src string) string {
 	m := md5.New()
@@ -41,9 +39,9 @@ func GetClient(c *gin.Context) {
 	// 查找订阅是否包含此名字
 	for _, sub := range list {
 		// 数据库订阅名字赋值变量
-		SunName = sub.Name
 		//查找token的md5是否匹配并且转换成小写
-		if Md5(SunName) == strings.ToLower(token) {
+		if Md5(sub.Name) == strings.ToLower(token) {
+			c.Set("subscriptionName", sub.Name)
 			// 判断是否带客户端参数
 			switch ClientIndex {
 			case "clash":
@@ -96,6 +94,7 @@ func GetClient(c *gin.Context) {
 
 }
 func GetV2ray(c *gin.Context) {
+	SunName := c.GetString("subscriptionName")
 	var sub models.Subcription
 	if SunName == "" {
 		c.Writer.WriteString("订阅名为空")
@@ -147,6 +146,7 @@ func GetV2ray(c *gin.Context) {
 	c.Writer.WriteString(node.Base64Encode(baselist))
 }
 func GetClash(c *gin.Context) {
+	SunName := c.GetString("subscriptionName")
 	var sub models.Subcription
 	// subname := c.Param("subname")
 	// subname := node.Base64Decode(SunName)
@@ -204,6 +204,7 @@ func GetClash(c *gin.Context) {
 	c.Writer.WriteString(string(DecodeClash))
 }
 func GetSurge(c *gin.Context) {
+	SunName := c.GetString("subscriptionName")
 	var sub models.Subcription
 	// subname := c.Param("subname")
 	// subname := node.Base64Decode(SunName)
