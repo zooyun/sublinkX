@@ -119,7 +119,7 @@ func GetV2ray(c *gin.Context) {
 	for _, v := range sub.Nodes {
 		switch {
 		// 如果包含多条节点
-		case strings.Contains(v.Link, ","):
+		case strings.Count(v.Link, "://") > 1 && strings.Contains(v.Link, ","):
 			links := strings.Split(v.Link, ",")
 			baselist += strings.Join(links, "\n") + "\n"
 			continue
@@ -127,7 +127,7 @@ func GetV2ray(c *gin.Context) {
 		case strings.Contains(v.Link, "http://") || strings.Contains(v.Link, "https://"):
 			resp, err := http.Get(v.Link)
 			if err != nil {
-				log.Println(err)
+				log.Println("无法获取上游订阅")
 				return
 			}
 			defer resp.Body.Close()
@@ -161,13 +161,10 @@ func GetClash(c *gin.Context) {
 	urls := []string{}
 
 	models.DB.Model(sub).Preload("Nodes").Find(&sub)
-	log.Println("订阅名:", sub.Nodes)
 	for _, v := range sub.Nodes {
-		log.Println("节点信息:", v)
-		log.Println("节点链接:", v.Link)
 		switch {
 		// 如果包含多条节点
-		case strings.Contains(v.Link, ","):
+		case strings.Count(v.Link, "://") > 1 && strings.Contains(v.Link, ","):
 			links := strings.Split(v.Link, ",")
 			urls = append(urls, links...)
 			continue
@@ -175,7 +172,7 @@ func GetClash(c *gin.Context) {
 		case strings.Contains(v.Link, "http://") || strings.Contains(v.Link, "https://"):
 			resp, err := http.Get(v.Link)
 			if err != nil {
-				log.Println(err)
+				log.Println("无法获取上游订阅")
 				return
 			}
 			defer resp.Body.Close()
@@ -188,7 +185,6 @@ func GetClash(c *gin.Context) {
 			urls = append(urls, v.Link)
 		}
 	}
-	log.Println("urls", urls)
 	var configs node.SqlConfig
 	err = json.Unmarshal([]byte(sub.Config), &configs)
 	if err != nil {
@@ -226,7 +222,7 @@ func GetSurge(c *gin.Context) {
 	for _, v := range sub.Nodes {
 		switch {
 		// 如果包含多条节点
-		case strings.Contains(v.Link, ","):
+		case strings.Count(v.Link, "://") > 1 && strings.Contains(v.Link, ","):
 			links := strings.Split(v.Link, ",")
 			urls = append(urls, links...)
 			continue
@@ -234,7 +230,7 @@ func GetSurge(c *gin.Context) {
 		case strings.Contains(v.Link, "http://") || strings.Contains(v.Link, "https://"):
 			resp, err := http.Get(v.Link)
 			if err != nil {
-				log.Println(err)
+				log.Println("无法获取上游订阅")
 				return
 			}
 			defer resp.Body.Close()

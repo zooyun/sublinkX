@@ -9,6 +9,8 @@ RUN go build -o sublinkX
 FROM alpine:latest
 WORKDIR /app
 
+RUN apk add --no-cache ca-certificates tzdata
+
 # 设置时区为 Asia/Shanghai
 ENV TZ=Asia/Shanghai
 

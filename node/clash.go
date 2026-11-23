@@ -26,11 +26,13 @@ type Proxy struct {
 	Tls                bool                   `yaml:"tls,omitempty"`
 	Servername         string                 `yaml:"servername,omitempty"`
 	Flow               string                 `yaml:"flow,omitempty"`
+	Encryption         string                 `yaml:"encryption,omitempty"`
 	AlterId            string                 `yaml:"alterId,omitempty"`
 	Network            string                 `yaml:"network,omitempty"`
 	Reality_opts       map[string]interface{} `yaml:"reality-opts,omitempty"`
 	Ws_opts            map[string]interface{} `yaml:"ws-opts,omitempty"`
 	Grpc_opts          map[string]interface{} `yaml:"grpc-opts,omitempty"`
+	Xhttp_opts         map[string]interface{} `yaml:"xhttp-opts,omitempty"`
 	Auth_str           string                 `yaml:"auth_str,omitempty"`
 	Auth               string                 `yaml:"auth,omitempty"`
 	Up                 int                    `yaml:"up,omitempty"`
@@ -218,6 +220,9 @@ func EncodeClash(urls []string, sqlconfig SqlConfig) ([]byte, error) {
 			if vless.Name == "" {
 				vless.Name = fmt.Sprintf("%s:%d", vless.Server, vless.Port)
 			}
+			if vless.Query.Pqv != "" {
+				return nil, fmt.Errorf("VLESS REALITY ML-DSA-65 verification is not supported by this converter")
+			}
 			ws_opts := map[string]interface{}{
 				"path": vless.Query.Path,
 				"headers": map[string]interface{}{
@@ -227,6 +232,15 @@ func EncodeClash(urls []string, sqlconfig SqlConfig) ([]byte, error) {
 			reality_opts := map[string]interface{}{
 				"public-key": vless.Query.Pbk,
 				"short-id":   vless.Query.Sid,
+			}
+			if vless.Query.Security == "reality" {
+				// Modern Xray REALITY requires the hybrid TLS key share. Explicit
+				// link hints can disable it for legacy servers.
+				support := true
+				if vless.Query.SupportX25519MLKEM768 != nil {
+					support = *vless.Query.SupportX25519MLKEM768
+				}
+				reality_opts["support-x25519mlkem768"] = support
 			}
 			grpc_opts := map[string]interface{}{
 				"grpc-mode":         "gun",
@@ -238,6 +252,25 @@ func EncodeClash(urls []string, sqlconfig SqlConfig) ([]byte, error) {
 			DeleteOpts(ws_opts)
 			DeleteOpts(reality_opts)
 			DeleteOpts(grpc_opts)
+			if vless.Query.Type != "ws" {
+				ws_opts = nil
+			}
+			if vless.Query.Type != "grpc" {
+				grpc_opts = nil
+			}
+			var xhttpOpts map[string]interface{}
+			if vless.Query.Type == "xhttp" || vless.Query.Type == "splithttp" {
+				xhttpOpts = map[string]interface{}{"path": vless.Query.Path, "host": vless.Query.Host}
+				if vless.Query.Mode != "" && vless.Query.Mode != "auto" {
+					xhttpOpts["mode"] = vless.Query.Mode
+				}
+				DeleteOpts(xhttpOpts)
+				vless.Query.Type = "xhttp"
+			}
+			encryption := vless.Query.Encryption
+			if encryption == "none" {
+				encryption = ""
+			}
 			tls := false
 			if vless.Query.Security != "" {
 				tls = true
@@ -255,10 +288,12 @@ func EncodeClash(urls []string, sqlconfig SqlConfig) ([]byte, error) {
 				Client_fingerprint: vless.Query.Fp,
 				Network:            vless.Query.Type,
 				Flow:               vless.Query.Flow,
+				Encryption:         encryption,
 				Alpn:               vless.Query.Alpn,
 				Ws_opts:            ws_opts,
 				Reality_opts:       reality_opts,
 				Grpc_opts:          grpc_opts,
+				Xhttp_opts:         xhttpOpts,
 				Udp:                sqlconfig.Udp,
 				Skip_cert_verify:   sqlconfig.Cert,
 				Tls:                tls,
@@ -387,10 +422,37 @@ func DecodeClash(proxys []Proxy, yamlfile string) ([]byte, error) {
 		// 如果 "proxies" 键不存在，创建一个新的切片
 		proxies = []interface{}{}
 	}
+	// Proxy and group names share a namespace in Mihomo.
+	usedNames := map[string]bool{"DIRECT": true, "REJECT": true, "PASS": true, "GLOBAL": true}
+	if groups, ok := config["proxy-groups"].([]interface{}); ok {
+		for _, item := range groups {
+			if group, ok := item.(map[string]interface{}); ok {
+				if name, ok := group["name"].(string); ok {
+					usedNames[name] = true
+				}
+			}
+		}
+	}
+	for _, item := range proxies {
+		if proxy, ok := item.(map[string]interface{}); ok {
+			if name, ok := proxy["name"].(string); ok {
+				usedNames[name] = true
+			}
+		}
+	}
 	// 定义一个代理列表名字
 	ProxiesNameList := []string{}
 	// 添加新代理
 	for _, p := range proxys {
+		base := strings.TrimSpace(p.Name)
+		if base == "" {
+			base = "node"
+		}
+		p.Name = base
+		for n := 2; usedNames[p.Name]; n++ {
+			p.Name = fmt.Sprintf("%s (%d)", base, n)
+		}
+		usedNames[p.Name] = true
 		ProxiesNameList = append(ProxiesNameList, p.Name)
 		proxies = append(proxies, p)
 	}
@@ -398,7 +460,10 @@ func DecodeClash(proxys []Proxy, yamlfile string) ([]byte, error) {
 	config["proxies"] = proxies
 	// 往ProxyGroup中插入代理列表
 	// ProxiesNameList := []string{"newProxy", "ceshi"}
-	proxyGroups := config["proxy-groups"].([]interface{})
+	proxyGroups, ok := config["proxy-groups"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("template must contain proxy-groups")
+	}
 	for i, pg := range proxyGroups {
 		proxyGroup, ok := pg.(map[string]interface{})
 		if !ok {
@@ -411,11 +476,15 @@ func DecodeClash(proxys []Proxy, yamlfile string) ([]byte, error) {
 		// 如果为链式代理的话则不插入返回
 		// log.Print("代理类型为:", proxyGroup["type"])
 		if proxyGroup["type"] == "relay" {
-			break
+			continue
 		}
 		// 清除 nil 值
 		var validProxies []interface{}
-		for _, p := range proxyGroup["proxies"].([]interface{}) {
+		groupProxies, ok := proxyGroup["proxies"].([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("invalid proxies list in proxy group %v", proxyGroup["name"])
+		}
+		for _, p := range groupProxies {
 			if p != nil {
 				validProxies = append(validProxies, p)
 			}
